@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<title>Blanco / Impostor</title>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<style>
+  body {
+    font-family: system-ui, sans-serif;
+    background: #111;
+    color: #eee;
+    margin: 0;
+    padding: 20px;
+  }
+
+  h1, h2 {
+    text-align: center;
+  }
+
+  .card {
+    max-width: 420px;
+    margin: 20px auto;
+    padding: 20px;
+    background: #1e1e1e;
+    border-radius: 10px;
+  }
+
+  input, button {
+    width: 100%;
+    padding: 10px;
+    margin: 6px 0;
+    border-radius: 6px;
+    border: none;
+    font-size: 1em;
+  }
+
+  button {
+    background: #4caf50;
+    color: black;
+    cursor: pointer;
+  }
+
+  button.secondary {
+    background: #555;
+    color: white;
+  }
+
+  button.vote {
+    background: #2196f3;
+    margin-top: 6px;
+  }
+
+  .hidden { display: none; }
+
+  .role {
+    font-size: 1.4em;
+    text-align: center;
+    margin: 10px 0;
+  }
+
+  .impostor { color: #ff5252; }
+  .vecino { color: #4caf50; }
+
+  pre {
+    white-space: pre-wrap;
+    line-height: 1.4;
+  }
+</style>
+</head>
+
+<body>
+
+<h1>🎭 IMPOSTOR</h1>
+
+<!-- INICIO -->
+<div class="card" id="inicio">
+  <button onclick="modoHost()">Host</button>
+  <button class="secondary" onclick="modoInvitado()">Invitado</button>
+</div>
+
+<!-- HOST -->
+<div class="card hidden" id="host">
+  <h2>Crear partida</h2>
+  <input id="nombreHost" placeholder="Tu nombre" />
+  <input id="rondas" type="number" placeholder="Número de rondas" />
+  <button onclick="crearPartida()">Crear partida</button>
+</div>
+
+<!-- INVITADO -->
+<div class="card hidden" id="invitado">
+  <h2>Unirse a partida</h2>
+  <input id="nombreInvitado" placeholder="Tu nombre" />
+  <input id="codigo" placeholder="Código de partida" />
+  <button onclick="unirse()">Unirse</button>
+</div>
+
+<!-- LOBBY -->
+<div class="card hidden" id="lobby">
+  <h2>Lobby</h2>
+  <p><strong>Código de partida:</strong> <span id="codigoLobby"></span></p>
+  <div id="listaJugadores"></div>
+  <button id="btnIniciarRonda" onclick="iniciarRonda()">Iniciar ronda</button>
+</div>
+
+<!-- ROL -->
+<div class="card hidden" id="rol">
+  <div id="rolTexto" class="role"></div>
+  <div id="palabraTexto"></div>
+  <button onclick="mostrarControl()">Continuar</button>
+</div>
+
+<!-- CONTROL -->
+<div class="card hidden" id="control">
+  <button id="btnIniciarVotacion" onclick="iniciarVotacion()">Iniciar votación</button>
+</div>
+
+<!-- VOTACIÓN -->
+<div class="card hidden" id="votacion">
+  <h2>Vota al impostor</h2>
+  <div id="botonesVoto"></div>
+</div>
+
+<!-- RESULTADO -->
+<div class="card hidden" id="resultado">
+  <h2>Resultado de la ronda</h2>
+  <pre id="resultadoTexto"></pre>
+  <button id="btnSiguienteRonda"  onclick="iniciarRonda()">Siguiente ronda</button>
+</div>
+
+<!-- FINAL -->
+<div class="card hidden" id="final">
+  <h2>🏆 Fin de la partida</h2>
+  <pre id="finalTexto"></pre>
+</div>
+
+<script>
+const socket = io();
+let codigoActual = null;
+let jugadores = [];
+let soyHost = false;
+
+/* ===== Navegación ===== */
+
+function show(id) {
+  document.querySelectorAll('.card').forEach(c => c.classList.add('hidden'));
+  document.getElementById(id).classList.remove('hidden');
+}
+
+function modoHost() { show('host'); }
+function modoInvitado() { show('invitado'); }
+
+/* ===== Acciones ===== */
+
+function crearPartida() {
+  soyHost = true;
+  socket.emit('crear_partida', {
+    nombre: nombreHost.value,
+    rondasTotales: Number(rondas.value || 3)
+  }, res => {
+    codigoActual = res.codigo;
+    codigoLobby.textContent = codigoActual;
+    show('lobby');
+	aplicarPermisos();
+  });
+}
+
+function unirse() {
+  soyHost = false;
+  socket.emit('unirse_partida', {
+    codigo: codigo.value,
+    nombre: nombreInvitado.value
+  }, res => {
+    if (!res.ok) return alert(res.error);
+    codigoActual = codigo.value;
+    codigoLobby.textContent = codigoActual;
+    show('lobby');
+	aplicarPermisos();
+	
+  });
+}
+
+function iniciarRonda() {
+  socket.emit('iniciar_ronda', { codigo: codigoActual });
+}
+
+function iniciarVotacion() {
+  socket.emit('iniciar_votacion', { codigo: codigoActual });
+}
+
+function votar(id) {
+  socket.emit('votar', { codigo: codigoActual, votadoId: id });
+}
+
+function aplicarPermisos() {
+  btnIniciarRonda.style.display = soyHost ? 'block' : 'none';
+  btnIniciarVotacion.style.display = soyHost ? 'block' : 'none';
+  btnSiguienteRonda.style.display = soyHost ? 'block' : 'none';
+}
+
+/* ===== Renderizado de mensajes ===== */
+
+
+function renderResultadoRonda(res) {
+  let texto = '';
+
+  const impostor = jugadores.find(j => j.id === res.impostorId);
+
+  if (res.ganaVecinos) {
+    texto += '✅ Los vecinos han ganado la ronda\n\n';
+  } else {
+    texto += '❌ El impostor ha ganado la ronda\n\n';
+  }
+
+  texto += `🕵️ El impostor era: ${impostor?.nombre}\n\n`;
+  texto += '📊 Marcador:\n';
+
+  res.puntuaciones.forEach(j => {
+    texto += `• ${j.nombre}: ${j.puntos} puntos\n`;
+  });
+
+  return texto;
+}
+
+function renderFinal(res) {
+  let texto = '';
+
+  if (res.ganadores.length === 1) {
+    texto += `🥇 Ganador: ${res.ganadores[0].nombre}\n\n`;
+  } else {
+    texto += '🤝 Empate entre:\n';
+    res.ganadores.forEach(g => texto += `• ${g.nombre}\n`);
+    texto += '\n';
+  }
+
+  texto += '📊 Clasificación final:\n';
+  res.puntuaciones.forEach(j => {
+    texto += `• ${j.nombre}: ${j.puntos} puntos\n`;
+  });
+
+  return texto;
+}
+
+/* ===== Eventos servidor ===== */
+
+socket.on('jugadores_actualizados', list => {
+  jugadores = list;
+  listaJugadores.innerHTML = list.map(j => `• ${j.nombre}`).join('<br>');
+});
+
+socket.on('rol_asignado', data => {
+  rolTexto.textContent = data.rol.toUpperCase();
+  rolTexto.className = 'role ' + data.rol;
+  palabraTexto.textContent = data.palabra ? `Palabra: ${data.palabra}` : '';
+  show('rol');
+  aplicarPermisos();
+});
+
+socket.on('votacion_iniciada', () => {
+  botonesVoto.innerHTML = '';
+  jugadores.forEach(j => {
+    const b = document.createElement('button');
+    b.textContent = j.nombre;
+    b.className = 'vote';
+    b.onclick = () => votar(j.id);
+    botonesVoto.appendChild(b);
+  });
+  show('votacion');
+  aplicarPermisos();
+});
+
+socket.on('resultado_ronda', res => {
+  resultadoTexto.textContent = renderResultadoRonda(res);
+  show('resultado');
+  aplicarPermisos();
+});
+
+socket.on('partida_finalizada', res => {
+  finalTexto.textContent = renderFinal(res);
+  show('final');
+});
+
+function mostrarControl() {
+  show('control');
+  aplicarPermisos();
+}
+</script>
+
+</body>
+</html>
