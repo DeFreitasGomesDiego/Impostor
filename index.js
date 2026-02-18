@@ -83,7 +83,9 @@ io.on('connection', socket => {
     console.log('Desconectado:', socket.id);
   });
 });
+const PORT=process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0',() =>{
+	console.log('Servidor escuchando en el puerto'+PORT);
+});
 
-server.listen(3000,'0.0.0.0', () => {
-  console.log('Servidor en http://localhost:3000');
 });
